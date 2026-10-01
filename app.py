@@ -1,19 +1,29 @@
 from flask import Flask, render_template, request, redirect, flash
 import mysql.connector
 from mysql.connector import Error
+from dotenv import load_dotenv
+import os
+
+
+# Load environment variables
+load_dotenv()
+
 
 app = Flask(__name__)
 
 # Secret key for flash messages
-app.secret_key = "student-management-secret-key"
+app.secret_key = os.getenv(
+    "FLASK_SECRET_KEY",
+    "student-management-secret-key"
+)
 
 
 # MySQL Database Connection
 db = mysql.connector.connect(
-    host="localhost",
-    user="student_user",
-    password="student123",
-    database="student_management"
+    host=os.getenv("DB_HOST"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    database=os.getenv("DB_NAME")
 )
 
 
@@ -36,6 +46,7 @@ def home():
         # Age validation
         try:
             age = int(age)
+
         except ValueError:
             flash("Age must be a number.", "error")
             return redirect("/")
@@ -57,7 +68,10 @@ def home():
             existing_student = cursor.fetchone()
 
             if existing_student:
-                flash("A student with this email already exists.", "error")
+                flash(
+                    "A student with this email already exists.",
+                    "error"
+                )
                 return redirect("/")
 
             # Insert student
@@ -72,13 +86,22 @@ def home():
 
             db.commit()
 
-            flash("Student added successfully!", "success")
+            flash(
+                "Student added successfully!",
+                "success"
+            )
 
         except Error:
+
             db.rollback()
-            flash("Database error. Student could not be added.", "error")
+
+            flash(
+                "Database error. Student could not be added.",
+                "error"
+            )
 
         finally:
+
             cursor.close()
 
         return redirect("/")
@@ -96,11 +119,16 @@ def home():
         WHERE name LIKE %s
         """
 
-        cursor.execute(query, ("%" + search + "%",))
+        cursor.execute(
+            query,
+            ("%" + search + "%",)
+        )
 
     else:
 
-        cursor.execute("SELECT * FROM students")
+        cursor.execute(
+            "SELECT * FROM students"
+        )
 
     students = cursor.fetchall()
 
@@ -128,13 +156,19 @@ def delete_student(id):
 
         db.commit()
 
-        flash("Student deleted successfully!", "success")
+        flash(
+            "Student deleted successfully!",
+            "success"
+        )
 
     except Error:
 
         db.rollback()
 
-        flash("Database error. Student could not be deleted.", "error")
+        flash(
+            "Database error. Student could not be deleted.",
+            "error"
+        )
 
     finally:
 
@@ -159,7 +193,10 @@ def edit_student(id):
         # Validation
         if not name or not email or not course or not age:
 
-            flash("All fields are required.", "error")
+            flash(
+                "All fields are required.",
+                "error"
+            )
 
             cursor.close()
 
@@ -171,7 +208,10 @@ def edit_student(id):
 
         except ValueError:
 
-            flash("Age must be a number.", "error")
+            flash(
+                "Age must be a number.",
+                "error"
+            )
 
             cursor.close()
 
@@ -179,7 +219,10 @@ def edit_student(id):
 
         if age < 1 or age > 100:
 
-            flash("Age must be between 1 and 100.", "error")
+            flash(
+                "Age must be between 1 and 100.",
+                "error"
+            )
 
             cursor.close()
 
@@ -221,13 +264,25 @@ def edit_student(id):
             WHERE id = %s
             """
 
-            values = (name, email, course, age, id)
+            values = (
+                name,
+                email,
+                course,
+                age,
+                id
+            )
 
-            cursor.execute(query, values)
+            cursor.execute(
+                query,
+                values
+            )
 
             db.commit()
 
-            flash("Student updated successfully!", "success")
+            flash(
+                "Student updated successfully!",
+                "success"
+            )
 
         except Error:
 
@@ -257,7 +312,10 @@ def edit_student(id):
 
     if student is None:
 
-        flash("Student not found.", "error")
+        flash(
+            "Student not found.",
+            "error"
+        )
 
         return redirect("/")
 
@@ -268,4 +326,9 @@ def edit_student(id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=True
+    )
