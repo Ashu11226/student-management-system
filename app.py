@@ -3,31 +3,43 @@ import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
 import os
+import time
 
-
-# Load environment variables
 load_dotenv()
-
 
 app = Flask(__name__)
 
-# Secret key for flash messages
 app.secret_key = os.getenv(
     "FLASK_SECRET_KEY",
     "student-management-secret-key"
 )
 
 
-# MySQL Database Connection
-db = mysql.connector.connect(
-    host=os.getenv("DB_HOST"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-    database=os.getenv("DB_NAME")
-)
+def get_db_connection():
+    max_retries = 10
+
+    for attempt in range(max_retries):
+        try:
+            connection = mysql.connector.connect(
+                host=os.getenv("DB_HOST"),
+                user=os.getenv("DB_USER"),
+                password=os.getenv("DB_PASSWORD"),
+                database=os.getenv("DB_NAME")
+            )
+
+            if connection.is_connected():
+                return connection
+
+        except Error as e:
+            print(
+                f"Database connection attempt "
+                f"{attempt + 1}/{max_retries} failed: {e}"
+            )
+            time.sleep(3)
+
+    raise Exception("Could not connect to MySQL database.")
 
 
-# Home Page + Add Student + Search
 @app.route("/", methods=["GET", "POST"])
 def home():
 
@@ -38,15 +50,12 @@ def home():
         course = request.form["course"].strip()
         age = request.form["age"].strip()
 
-        # Basic validation
         if not name or not email or not course or not age:
             flash("All fields are required.", "error")
             return redirect("/")
 
-        # Age validation
         try:
             age = int(age)
-
         except ValueError:
             flash("Age must be a number.", "error")
             return redirect("/")
@@ -55,11 +64,13 @@ def home():
             flash("Age must be between 1 and 100.", "error")
             return redirect("/")
 
-        cursor = db.cursor()
+        db = None
+        cursor = None
 
         try:
+            db = get_db_connection()
+            cursor = db.cursor()
 
-            # Check duplicate email
             cursor.execute(
                 "SELECT id FROM students WHERE email = %s",
                 (email,)
@@ -74,7 +85,6 @@ def home():
                 )
                 return redirect("/")
 
-            # Insert student
             query = """
             INSERT INTO students (name, email, course, age)
             VALUES (%s, %s, %s, %s)
@@ -83,56 +93,75 @@ def home():
             values = (name, email, course, age)
 
             cursor.execute(query, values)
-
             db.commit()
 
-            flash(
-                "Student added successfully!",
-                "success"
-            )
+            flash("Student added successfully!", "success")
 
-        except Error:
+        except Error as e:
+            if db:
+                db.rollback()
 
-            db.rollback()
-
+            print("Database error:", e)
             flash(
                 "Database error. Student could not be added.",
                 "error"
             )
 
         finally:
+            if cursor:
+                cursor.close()
 
-            cursor.close()
+            if db and db.is_connected():
+                db.close()
 
         return redirect("/")
 
-
-    # Search Student
     search = request.args.get("search", "").strip()
 
-    cursor = db.cursor()
+    db = None
+    cursor = None
 
-    if search:
+    try:
+        db = get_db_connection()
+        cursor = db.cursor()
 
-        query = """
-        SELECT * FROM students
-        WHERE name LIKE %s
-        """
+        if search:
 
-        cursor.execute(
-            query,
-            ("%" + search + "%",)
+            query = """
+            SELECT * FROM students
+            WHERE name LIKE %s
+            """
+
+            cursor.execute(
+                query,
+                ("%" + search + "%",)
+            )
+
+        else:
+            cursor.execute(
+                "SELECT * FROM students"
+            )
+
+        students = cursor.fetchall()
+
+    except Error as e:
+
+        print("Database error:", e)
+
+        flash(
+            "Database error. Could not load students.",
+            "error"
         )
 
-    else:
+        students = []
 
-        cursor.execute(
-            "SELECT * FROM students"
-        )
+    finally:
 
-    students = cursor.fetchall()
+        if cursor:
+            cursor.close()
 
-    cursor.close()
+        if db and db.is_connected():
+            db.close()
 
     return render_template(
         "index.html",
@@ -141,13 +170,16 @@ def home():
     )
 
 
-# Delete Student
 @app.route("/delete/<int:id>")
 def delete_student(id):
 
-    cursor = db.cursor()
+    db = None
+    cursor = None
 
     try:
+
+        db = get_db_connection()
+        cursor = db.cursor()
 
         cursor.execute(
             "DELETE FROM students WHERE id = %s",
@@ -161,9 +193,12 @@ def delete_student(id):
             "success"
         )
 
-    except Error:
+    except Error as e:
 
-        db.rollback()
+        if db:
+            db.rollback()
+
+        print("Database error:", e)
 
         flash(
             "Database error. Student could not be deleted.",
@@ -172,16 +207,17 @@ def delete_student(id):
 
     finally:
 
-        cursor.close()
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
 
     return redirect("/")
 
 
-# Edit / Update Student
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
 def edit_student(id):
-
-    cursor = db.cursor()
 
     if request.method == "POST":
 
@@ -190,7 +226,6 @@ def edit_student(id):
         course = request.form["course"].strip()
         age = request.form["age"].strip()
 
-        # Validation
         if not name or not email or not course or not age:
 
             flash(
@@ -198,12 +233,9 @@ def edit_student(id):
                 "error"
             )
 
-            cursor.close()
-
             return redirect(f"/edit/{id}")
 
         try:
-
             age = int(age)
 
         except ValueError:
@@ -212,8 +244,6 @@ def edit_student(id):
                 "Age must be a number.",
                 "error"
             )
-
-            cursor.close()
 
             return redirect(f"/edit/{id}")
 
@@ -224,18 +254,22 @@ def edit_student(id):
                 "error"
             )
 
-            cursor.close()
-
             return redirect(f"/edit/{id}")
 
+        db = None
+        cursor = None
 
         try:
 
-            # Check duplicate email
+            db = get_db_connection()
+            cursor = db.cursor()
+
             cursor.execute(
                 """
-                SELECT id FROM students
-                WHERE email = %s AND id != %s
+                SELECT id
+                FROM students
+                WHERE email = %s
+                AND id != %s
                 """,
                 (email, id)
             )
@@ -249,12 +283,8 @@ def edit_student(id):
                     "error"
                 )
 
-                cursor.close()
-
                 return redirect(f"/edit/{id}")
 
-
-            # Update student
             query = """
             UPDATE students
             SET name = %s,
@@ -284,9 +314,12 @@ def edit_student(id):
                 "success"
             )
 
-        except Error:
+        except Error as e:
 
-            db.rollback()
+            if db:
+                db.rollback()
+
+            print("Database error:", e)
 
             flash(
                 "Database error. Student could not be updated.",
@@ -295,20 +328,47 @@ def edit_student(id):
 
         finally:
 
-            cursor.close()
+            if cursor:
+                cursor.close()
+
+            if db and db.is_connected():
+                db.close()
 
         return redirect("/")
 
+    db = None
+    cursor = None
 
-    # Get existing student
-    cursor.execute(
-        "SELECT * FROM students WHERE id = %s",
-        (id,)
-    )
+    try:
 
-    student = cursor.fetchone()
+        db = get_db_connection()
+        cursor = db.cursor()
 
-    cursor.close()
+        cursor.execute(
+            "SELECT * FROM students WHERE id = %s",
+            (id,)
+        )
+
+        student = cursor.fetchone()
+
+    except Error as e:
+
+        print("Database error:", e)
+
+        flash(
+            "Database error.",
+            "error"
+        )
+
+        return redirect("/")
+
+    finally:
+
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
 
     if student is None:
 
